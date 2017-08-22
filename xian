@@ -1,5 +1,4 @@
 # coding: utf-8
-#40万数据6分钟左右分配结束
 
 import os
 import pymysql
