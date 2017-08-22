@@ -1,0 +1,343 @@
+# coding: utf-8
+#40万数据6分钟左右分配结束
+
+import os
+import pymysql
+import numpy as np
+import xlsxwriter
+import pandas as pd
+from matplotlib import pyplot as plt
+from sklearn.cluster import KMeans
+import math
+
+import datetime
+
+starttime = datetime.datetime.now()
+
+os.chdir('E:\********')
+
+# 配置MySQL
+
+conn = pymysql.connect(host='********', port=***, user='***', passwd='***', db='***', charset='utf8')
+
+cur = conn.cursor()
+
+# sql语句
+xingyejzh = "SELECT  f1 as shfzh18,f2 as  ajbh,f3 as rq, f5 as ywy from xingyejzhresult "
+
+# 利用pandas 模块导入mysql数据
+mysqlxingyejzh = pd.read_sql(xingyejzh, conn)
+
+duplicatedata = mysqlxingyejzh[['shfzh18', 'ajbh', 'rq', 'ywy']]
+duplicatedata['ywy'] = duplicatedata['ywy'].str.upper()
+
+# 数据去重
+duplicatedata = duplicatedata.drop_duplicates()
+duplicatedata['num'] = 1
+
+caozuodata = duplicatedata.groupby(['ywy', 'ajbh']).sum().reset_index()
+
+
+xingyebase = pd.read_csv('xingyebase.csv', header=None)
+
+
+def xybasenames(data1):
+    data1.colnames = ['id', 'UpdateFlag', 'branch', 'ajbh', 'kehu', 'ajlx', 'shfzh', 'shfzh18', 'shebaoID', 'xm',
+                      'pinyin', 'sex', 'zhiwu', 'zjqkje', 'zjshje', 'zjzxqke', 'zjzxqkerq', 'zjyhlx', 'jdsj', 'dqsj',
+                      'zu', 'ywy', 'states', 'period', 'yjbl', 'fenpeisj', 'urgent', 'lasttime', 'closetime', 'czy',
+                      'addtime', 'pici', 'inpici', 'shengfen', 'chengshi', 'remark1', 'remark2', 'remark3', 'lastJzSj',
+                      'kongguan', 'PromisedDate', 'PromisedJe', 'nextStep', 'hint', 'dingyueTime', 'fabuTime', 'gaNum',
+                      'Ajsx', 'ajInfo', 'kehuAjBh', 'ajStop', 'ajLock', 'yxAj', 'isShare', 'zxxddm', 'picipizhu']
+    return data1
+
+
+xingyebase = xybasenames(xingyebase[:])
+xingyebase.columns = xingyebase.colnames
+
+# 挑选列赋值给新变量
+xingyebase1 = xingyebase[["ajbh", "shfzh18", "ywy", "zjqkje", "zjshje"]]
+
+# 数据集中新列的创建和运算
+xingyebase1["hkzhb"] = xingyebase1["zjshje"] / xingyebase1["zjqkje"]
+
+# 数据集的切片操作
+xingyebase1["bornyear"] = xingyebase1["shfzh18"].str.slice(6, 10)
+xingyebase1["sex"] = xingyebase1["shfzh18"].str.get(16)
+xingyebase1["address"] = xingyebase1["shfzh18"].str.slice(0, 6)
+xingyebase1["shfzhnum"] = xingyebase1["shfzh18"].str.len()
+xingyebase2 = xingyebase1[["ajbh", "shfzh18", "bornyear", "shfzhnum", "sex", "address", "zjqkje", "zjshje", "ywy"]]
+
+# 数据集的清洗与类型转变
+xingyebase2 = xingyebase2[xingyebase2["shfzhnum"] == 18]
+xingyebase2["yearlen"] = xingyebase2["bornyear"].str.len()
+xingyebase2 = xingyebase2[xingyebase2["yearlen"] == 4]
+list(set(xingyebase2["bornyear"]))
+xingyebase2 = xingyebase2[xingyebase2["bornyear"] != '\xe7\xac\xac2']
+xingyebase2["bornyear"] = xingyebase2["bornyear"].astype(int)
+xingyebase2["age"] = 2017 - xingyebase2["bornyear"]
+xingyebase2["sex"] = xingyebase2["sex"].astype(int)
+
+# 数据集清洗和大小写转变与删除na行
+xingyebase2["sex"][xingyebase2["sex"] % 2 == 0] = 0
+xingyebase2["sex"][xingyebase2["sex"] != 0] = 1
+xingyebase2["address"] = xingyebase2["address"].astype(int)
+xingyebase2["hkzhb"] = xingyebase2["zjshje"] / xingyebase2["zjqkje"]
+xingyebase2["ywy"] = xingyebase2["ywy"].str.upper()
+xingyebase3 = xingyebase2.dropna()
+
+# 变量选取与数据清洗
+xingyebase4 = xingyebase3[["ajbh", "shfzh18", "age", "sex", "address", "zjqkje", "zjshje", "hkzhb", "ywy"]]
+xingyebase4 = xingyebase4[xingyebase4.zjqkje > 0]
+
+duangdabase5 = pd.merge(xingyebase4, caozuodata, on=["ywy", "ajbh"], how="left")
+
+xingyebase4["nnn"] = 1
+gongan = xingyebase4.groupby("shfzh18").count().reset_index()
+gongan = gongan[["shfzh18", "nnn"]]
+gongantest = pd.merge(xingyebase4, gongan, on="shfzh18", how="left")
+# 0表示共案,1表示不共案
+gongantest["nnn_y"][gongantest.nnn_y > 1] = 0
+gongantest.columns = ['ajbh', 'shfzh18', 'age', 'sex', 'address', 'zjqkje', 'zjshje', 'hkzhb', 'ywy', 'nnn', 'gongan']
+gongantest = gongantest[["ajbh", "ywy", "gongan"]]
+
+xingyebase6 = pd.merge(duangdabase5, gongantest, on=["ajbh", "ywy"], how="left")
+
+
+# 两个数据归一化
+def maxminscale(normal):
+    max1 = np.max(normal)
+    min1 = np.min(normal)
+    normal = (normal - min1) / (max1 - min1)
+    return normal
+
+
+def datascale(scaledata):
+    mean1 = np.mean(scaledata)
+    std1 = np.std(scaledata)
+    scaledata = (scaledata - mean1) / std1
+    return scaledata
+
+
+# 调用函数进行归一化
+xingyebase6 = xingyebase6.fillna({"num":6})
+xingyebase6["age"] = maxminscale(xingyebase6["age"])
+xingyebase6["address"] = maxminscale(xingyebase6["address"])
+xingyebase6["zjqkje"] = maxminscale(xingyebase6["zjqkje"])
+xingyebase6["zjshje"] = maxminscale(xingyebase6["zjshje"])
+xingyebase6["hkzhb"] = maxminscale(xingyebase6["hkzhb"])
+xingyebase6["num"] = maxminscale(xingyebase6["num"])
+
+# 挑选聚类数值型变量
+xingyebase7 = xingyebase6
+testclust = xingyebase7[["age", "sex", "address", "zjqkje", "zjshje", "hkzhb", "num", "gongan"]]
+
+# 查看聚类后的均方误差选取最优值
+"""a = np.array(range(10))
+for j in range(2,12):
+    kmeanss = KMeans(n_clusters=j, init='k-means++', n_init=10, max_iter=300,algorithm='auto').fit(testclust)
+    a[j-2] = kmeanss.inertia_
+a
+"""
+
+# matplotlib绘图
+# x = np.array(range(1, 11))
+#
+# y = a
+#
+# # 解决中文乱码
+# plt.rc('font', family='SimHei', size=13)
+# plt.xlabel("聚类个数")
+# plt.ylabel("均方误差")
+# plt.plot(x, y)
+# plt.show()
+
+# K均值聚类
+kmeans = KMeans(n_clusters=5, init='k-means++', n_init=10, max_iter=300, algorithm='auto').fit(testclust)
+# K均值标签
+testclust["label"] = kmeans.labels_
+# K均值中心点
+kcenters = kmeans.cluster_centers_
+
+
+# 显示均方误差
+# kmeans.inertia_
+
+
+
+# 计算各个聚类后到中心的欧式距离
+def centerDistance(labeldata, centerdata):
+    ldata0 = labeldata[labeldata.label == 0]
+    # 选择数据的第0到第5列,ndarray格式
+    ldata0 = ldata0.iloc[:, 0:8]
+    # 转为array格式
+    ldata00 = np.array(ldata0)
+
+    ldata1 = labeldata[labeldata.label == 1]
+    ldata1 = ldata1.iloc[:, 0:8]
+    ldata11 = np.array(ldata1)
+
+    ldata2 = labeldata[labeldata.label == 2]
+    ldata2 = ldata2.iloc[:, 0:8]
+    ldata22 = np.array(ldata2)
+
+    ldata3 = labeldata[labeldata.label == 3]
+    ldata3 = ldata3.iloc[:, 0:8]
+    ldata33 = np.array(ldata3)
+
+    ldata4 = labeldata[labeldata.label == 4]
+    ldata4 = ldata4.iloc[:, 0:8]
+    ldata44 = np.array(ldata4)
+
+    # 矩阵和向量相减,每一行减去向量
+    test0 = ldata00 - kcenters[0]
+    # 矩阵对应元素相乘
+    test0 = test0 * test0
+    # 矩阵按行加和
+    test0 = test0.sum(axis=1)
+    test0 = np.sqrt(test0)
+
+    test1 = ldata11 - kcenters[1]
+    test1 = test1 * test1
+    test1 = test1.sum(axis=1)
+    test1 = np.sqrt(test1)
+
+    test2 = ldata22 - kcenters[2]
+    test2 = test2 * test2
+    test2 = test2.sum(axis=1)
+    test2 = np.sqrt(test2)
+
+    test3 = ldata33 - kcenters[3]
+    test3 = test3 * test3
+    test3 = test3.sum(axis=1)
+    test3 = np.sqrt(test3)
+
+    test4 = ldata44 - kcenters[4]
+    test4 = test4 * test4
+    test4 = test4.sum(axis=1)
+    test4 = np.sqrt(test4)
+
+    # 合并数据
+    test = np.concatenate((test0, test1, test2, test3, test4))
+
+    return test
+
+
+# 计算距离
+ttttt = centerDistance(testclust, kcenters)
+
+# 距离赋值
+testclust["ddd"] = ttttt
+
+# 赋值筛选
+xingyebase7["label"] = testclust["label"]
+xingyebase7["ddd"] = testclust["ddd"]
+testclust["ywy"] = xingyebase7["ywy"]
+xingyebase7["nnn"] = 1
+
+# 数据清洗
+data1 = xingyebase7.groupby("label").sum().reset_index()
+data1 = data1[["label", "nnn"]]
+
+# 数据清洗
+data2 = xingyebase7.groupby(["label", "ywy"]).sum().reset_index()
+
+
+data2 = data2.sort_values(["label", "zjshje"], ascending=False)
+data2 = data2[["label", "ywy", "zjshje", "nnn"]]
+
+# 数据合并筛选
+fpresult = pd.merge(data2, data1, on="label", how="left")
+fpresult["fpb"] = fpresult["nnn_x"] / fpresult["nnn_y"]
+fpresult = fpresult[["label", "ywy", "zjshje", "nnn_x", "fpb"]]
+
+# 数据合并筛选
+xingyeresult = pd.merge(xingyebase7, fpresult, on=["label", "ywy"], how="left")
+rankdata = xingyeresult.sort_values(["label", "ddd"])
+rankdata[rankdata.label == 4]
+
+# 洗案
+label4 = fpresult[fpresult.label == 4].shape[0]
+lenrank = rankdata[rankdata.label == 4].shape[0]
+fpdata4 = fpresult[fpresult.label == 4].reset_index(drop=True)
+rankdata4 = rankdata[rankdata.label == 4].reset_index(drop=True)
+sumnum = 0
+for i in range(label4):
+    rank4 = int(fpdata4["nnn_x"][i])
+    sumnum = sumnum + rank4
+    sumnum1 = sumnum - rank4
+    if sumnum < rank4 + 1:
+        rankdata4["ywy"][0:sumnum] = fpdata4["ywy"][i]
+    else:
+        rankdata4["ywy"][sumnum1:sumnum] = fpdata4["ywy"][i]
+
+# 洗案
+label3 = fpresult[fpresult.label == 3].shape[0]
+fpdata3 = fpresult[fpresult.label == 3].reset_index(drop=True)
+rankdata3 = rankdata[rankdata.label == 3].reset_index(drop=True)
+sumnum = 0
+for i in range(label3):
+    rank3 = int(fpdata3["nnn_x"][i])
+    sumnum = sumnum + rank3
+    sumnum1 = sumnum - rank3
+    if sumnum < rank3 + 1:
+        rankdata3["ywy"][0:sumnum] = fpdata3["ywy"][i]
+    else:
+        rankdata3["ywy"][sumnum1:sumnum] = fpdata3["ywy"][i]
+
+# 洗案
+label2 = fpresult[fpresult.label == 2].shape[0]
+fpdata2 = fpresult[fpresult.label == 2].reset_index(drop=True)
+rankdata2 = rankdata[rankdata.label == 2].reset_index(drop=True)
+sumnum = 0
+for i in range(label2):
+    rank2 = int(fpdata2["nnn_x"][i])
+    sumnum = sumnum + rank2
+    sumnum1 = sumnum - rank2
+    if sumnum < rank2 + 1:
+        rankdata2["ywy"][0:sumnum] = fpdata2["ywy"][i]
+    else:
+        rankdata2["ywy"][sumnum1:sumnum] = fpdata2["ywy"][i]
+
+# 洗案
+label1 = fpresult[fpresult.label == 1].shape[0]
+fpdata1 = fpresult[fpresult.label == 1].reset_index(drop=True)
+rankdata1 = rankdata[rankdata.label == 1].reset_index(drop=True)
+sumnum = 0
+for i in range(label1):
+    rank1 = int(fpdata1["nnn_x"][i])
+    sumnum = sumnum + rank1
+    sumnum1 = sumnum - rank1
+    if sumnum < rank1 + 1:
+        rankdata1["ywy"][0:sumnum] = fpdata1["ywy"][i]
+    else:
+        rankdata1["ywy"][sumnum1:sumnum] = fpdata1["ywy"][i]
+
+# 洗案
+label0 = fpresult[fpresult.label == 0].shape[0]
+fpdata0 = fpresult[fpresult.label == 0].reset_index(drop=True)
+rankdata0 = rankdata[rankdata.label == 0].reset_index(drop=True)
+sumnum = 0
+for i in range(label0):
+    rank0 = int(fpdata0["nnn_x"][i])
+    sumnum = sumnum + rank0
+    sumnum1 = sumnum - rank0
+    if sumnum < rank0 + 1:
+        rankdata0["ywy"][0:sumnum] = fpdata0["ywy"][i]
+    else:
+        rankdata0["ywy"][sumnum1:sumnum] = fpdata0["ywy"][i]
+
+
+
+
+# 数据合并洗案后的结果
+resultrankdata = pd.concat([rankdata0, rankdata1, rankdata2, rankdata3, rankdata4], ignore_index=True)
+
+# writer = pd.ExcelWriter('output1.xlsx',options={'encoding':'utf-8'})
+# resultrankdata.to_excel(writer,'Sheet1',encoding='UTF-8')
+# writer.save()
+# resultrankdata
+
+endtime = datetime.datetime.now()
+print (resultrankdata.shape)
+print ((endtime - starttime).seconds)
+
